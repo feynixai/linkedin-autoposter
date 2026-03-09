@@ -1,0 +1,7 @@
+.env
+token.json
+*.pyc
+__pycache__/
+.venv/
+generated_images/
+posts.db
