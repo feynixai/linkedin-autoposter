@@ -33,6 +33,19 @@ def get_conn():
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS post_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            linkedin_post_id TEXT,
+            impressions INTEGER DEFAULT 0,
+            likes INTEGER DEFAULT 0,
+            comments INTEGER DEFAULT 0,
+            shares INTEGER DEFAULT 0,
+            checked_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (post_id) REFERENCES posts(id)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id TEXT NOT NULL,
@@ -215,6 +228,42 @@ def get_scheduled_posts():
     rows = conn.execute(
         "SELECT * FROM posts WHERE status = 'scheduled' ORDER BY posted_at ASC"
     ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_posts_today():
+    """Count how many posts were made/scheduled today."""
+    conn = get_conn()
+    count = conn.execute(
+        "SELECT COUNT(*) as c FROM posts WHERE status IN ('posted', 'scheduled') AND created_at > datetime('now', 'start of day')"
+    ).fetchone()["c"]
+    conn.close()
+    return count
+
+
+def save_metrics(post_id, linkedin_post_id, impressions, likes, comments, shares):
+    """Save post performance metrics."""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO post_metrics (post_id, linkedin_post_id, impressions, likes, comments, shares) VALUES (?, ?, ?, ?, ?, ?)",
+        (post_id, linkedin_post_id, impressions, likes, comments, shares),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_top_posts(limit=5):
+    """Get top performing posts by engagement for learning."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT p.content, p.trends_used, pm.impressions, pm.likes, pm.comments, pm.shares,
+               (pm.likes + pm.comments * 3 + pm.shares * 5) as engagement_score
+        FROM post_metrics pm
+        JOIN posts p ON p.id = pm.post_id
+        ORDER BY engagement_score DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

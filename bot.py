@@ -76,6 +76,7 @@ TOOL_EMOJI = {
     "get_memories": "🧠 Loading preferences...",
     "post_to_linkedin": "🚀 Posting to LinkedIn...",
     "schedule_linkedin_post": "📅 Scheduling on LinkedIn...",
+    "save_post_metrics": "📊 Saving metrics...",
     "skip_draft": "⏭️ Skipping draft...",
 }
 
@@ -225,6 +226,38 @@ async def scheduled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_photo(chat_id, img, caption=caption, parse_mode="Markdown", reply_markup=keyboard)
             else:
                 await context.bot.send_message(chat_id, caption, parse_mode="Markdown", reply_markup=keyboard)
+
+
+async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show performance metrics for recent posts."""
+    chat_id = str(update.effective_chat.id)
+    if AUTHORIZED_CHAT_ID and chat_id != AUTHORIZED_CHAT_ID:
+        return
+
+    from db import get_top_posts, get_conn
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT p.id, p.content, pm.likes, pm.comments, pm.shares, pm.checked_at
+        FROM post_metrics pm
+        JOIN posts p ON p.id = pm.post_id
+        ORDER BY pm.checked_at DESC
+        LIMIT 10
+    """).fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("No metrics yet. Metrics are checked every 6 hours after posting.")
+        return
+
+    lines = []
+    for r in rows:
+        lines.append(
+            f"*#{r['id']}* — ❤️ {r['likes']} 💬 {r['comments']} 🔄 {r['shares']}\n{r['content'][:60]}..."
+        )
+    await update.message.reply_text(
+        "📊 *Post Performance:*\n\n" + "\n\n".join(lines),
+        parse_mode="Markdown",
+    )
 
 
 async def send_preview(bot, chat_id, draft_id):
@@ -477,25 +510,91 @@ async def check_scheduled_posts(bot):
                 await bot.send_message(AUTHORIZED_CHAT_ID, f"Failed to publish scheduled post #{post['id']}: {e}")
 
 
-async def daily_generate(bot):
-    """Called by scheduler at 8:00 AM IST daily."""
+async def auto_generate_morning(bot):
+    """11 AM IST — Priority: influential tweets, then trending news."""
     if not AUTHORIZED_CHAT_ID:
         return
-    logger.info("Running daily pipeline...")
+
+    from db import get_posts_today
+    if get_posts_today() >= 2:
+        logger.info("Already 2 posts today (user posted manually), skipping morning auto-generate")
+        return
+
+    logger.info("Running morning auto-generate (11 AM)...")
     try:
         result = await asyncio.to_thread(
             run_agent_sync,
-            "Search for the most interesting AI and tech news today. Create a LinkedIn post about the most compelling trend. Make sure to include source links."
+            "Search for the BEST topic to post about right now. Consider ALL sources:\n- Viral tweets from tech leaders (Sam Altman, Karpathy, Elon, etc.)\n- Breaking news from TechCrunch, The Verge, Ars Technica\n- Trending topics on Hacker News\n- Any major AI/tech announcements today\n\nPick the SINGLE most compelling, engagement-worthy topic regardless of source. Create a LinkedIn post about it with source links."
         )
         final = result.get("result", {})
         draft = final.get("draft")
         if draft:
             await send_preview(bot, AUTHORIZED_CHAT_ID, draft["id"])
         else:
-            await bot.send_message(AUTHORIZED_CHAT_ID, "Daily generation failed. Check logs.")
+            await bot.send_message(AUTHORIZED_CHAT_ID, "Morning auto-generate failed. Check logs.")
     except Exception as e:
-        await bot.send_message(AUTHORIZED_CHAT_ID, f"Daily error: {e}")
-        logger.error(f"Daily error: {e}", exc_info=True)
+        await bot.send_message(AUTHORIZED_CHAT_ID, f"Morning auto-generate error: {e}")
+        logger.error(f"Morning auto-generate error: {e}", exc_info=True)
+
+
+async def auto_generate_evening(bot):
+    """5 PM IST — Different angle: deeper analysis, predictions, or different topic."""
+    if not AUTHORIZED_CHAT_ID:
+        return
+
+    from db import get_posts_today
+    if get_posts_today() >= 2:
+        logger.info("Already 2 posts today (user posted manually), skipping evening auto-generate")
+        return
+
+    logger.info("Running evening auto-generate (5 PM)...")
+    try:
+        result = await asyncio.to_thread(
+            run_agent_sync,
+            "Search for the BEST topic to post about right now — DIFFERENT from this morning's post. Consider ALL sources:\n- Viral tweets from tech leaders\n- News from TechCrunch, The Verge, Ars Technica, Hacker News\n- Any major AI/tech developments today\n\nPick the most compelling topic you haven't covered today. Focus on a unique angle, deeper analysis, or a prediction. Create a LinkedIn post with source links."
+        )
+        final = result.get("result", {})
+        draft = final.get("draft")
+        if draft:
+            await send_preview(bot, AUTHORIZED_CHAT_ID, draft["id"])
+        else:
+            await bot.send_message(AUTHORIZED_CHAT_ID, "Evening auto-generate failed. Check logs.")
+    except Exception as e:
+        await bot.send_message(AUTHORIZED_CHAT_ID, f"Evening auto-generate error: {e}")
+        logger.error(f"Evening auto-generate error: {e}", exc_info=True)
+
+
+async def ask_for_metrics(bot):
+    """Once daily, ask user for metrics on recent posts."""
+    if not AUTHORIZED_CHAT_ID:
+        return
+
+    from db import get_conn
+    conn = get_conn()
+    # Get posts from last 3 days that don't have metrics yet
+    rows = conn.execute("""
+        SELECT p.id, p.content FROM posts p
+        WHERE p.status = 'posted'
+        AND p.posted_at > datetime('now', '-3 days')
+        AND p.id NOT IN (SELECT post_id FROM post_metrics)
+        ORDER BY p.id DESC LIMIT 3
+    """).fetchall()
+    conn.close()
+
+    if not rows:
+        return
+
+    lines = []
+    for r in rows:
+        lines.append(f"• Post #{r['id']}: {r['content'][:60]}...")
+
+    await bot.send_message(
+        AUTHORIZED_CHAT_ID,
+        f"📊 *How did these posts perform?*\n\n"
+        + "\n".join(lines)
+        + "\n\nReply with metrics like:\n\"Post #12 got 50 likes 10 comments 3 shares\"",
+        parse_mode="Markdown",
+    )
 
 
 def main():
@@ -522,6 +621,7 @@ def main():
     app.add_handler(CommandHandler("preview", preview_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("scheduled", scheduled_command))
+    app.add_handler(CommandHandler("metrics", metrics_command))
 
     # Button callbacks
     app.add_handler(CallbackQueryHandler(button_callback))
@@ -536,22 +636,40 @@ def main():
     async def post_init(application):
         global scheduler
         scheduler = AsyncIOScheduler()
+        # 11 AM IST = 5:30 AM UTC — morning post (priority: influential tweets)
         scheduler.add_job(
-            daily_generate,
-            CronTrigger(hour=2, minute=30),  # 2:30 AM UTC = 8:00 AM IST
+            auto_generate_morning,
+            CronTrigger(hour=5, minute=30),
             args=[application.bot],
-            id="daily_generate",
+            id="morning_generate",
             replace_existing=True,
         )
+        # 5 PM IST = 11:30 AM UTC — evening post (different angle)
+        scheduler.add_job(
+            auto_generate_evening,
+            CronTrigger(hour=11, minute=30),
+            args=[application.bot],
+            id="evening_generate",
+            replace_existing=True,
+        )
+        # Check scheduled posts every minute
         scheduler.add_job(
             check_scheduled_posts,
-            CronTrigger(minute="*"),  # Every minute
+            CronTrigger(minute="*"),
             args=[application.bot],
             id="check_scheduled",
             replace_existing=True,
         )
+        # Ask for metrics once daily at 9 PM IST (3:30 PM UTC)
+        scheduler.add_job(
+            ask_for_metrics,
+            CronTrigger(hour=15, minute=30),
+            args=[application.bot],
+            id="ask_metrics",
+            replace_existing=True,
+        )
         scheduler.start()
-        logger.info("Scheduler started — daily generation at 8:00 AM IST, scheduled posts checked every minute")
+        logger.info("Scheduler started — auto-generate at 11 AM & 5 PM IST, metrics every 6h")
 
     app.post_init = post_init
 

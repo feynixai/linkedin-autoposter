@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from db import (
     save_draft, get_latest_draft, get_draft, get_recent_topics,
     update_draft_content, mark_posted, mark_skipped, set_scheduled_time,
-    get_scheduled_posts, remember, forget, get_all_memories,
+    get_scheduled_posts, remember, forget, get_all_memories, get_top_posts,
 )
 from pipeline import fetch_url_content, fetch_trends, generate_image, download_image_from_url, download_video_from_url, IMAGES_DIR
 from linkedin import create_post_with_image, create_post_with_video
@@ -28,6 +28,16 @@ IMPORTANT: You are a general-purpose agent. NOT everything is about creating pos
 - If the user asks a question, just answer it. Do NOT create a post unless asked.
 - If the user shares info/links WITHOUT asking for a post, just acknowledge and discuss.
 - ONLY create/save a draft when the user explicitly wants a post (e.g., "make a post", "write a post about this", "create a LinkedIn post", "generate a post").
+
+WHEN EXPLAINING OR ANSWERING QUESTIONS (not posts):
+- Be clear and concise — no fluff or filler
+- Use short lines, bullet points, or numbered steps
+- Break down complex topics simply — like explaining to a smart friend
+- Use analogies and real-world examples to make concepts click
+- Use "→" arrows to show cause/effect
+- Bold the key takeaway
+- If comparing things, use a quick side-by-side format
+- Keep it conversational, not textbook-style
 
 You have tools available to:
 - Search the web for trending topics, news, and context
@@ -50,9 +60,36 @@ RULES:
 - When given URLs, ALWAYS fetch them first to get actual content
 - When asked to search, use web_search to find real current information
 - Include source links/citations in posts when referencing specific content
-- Images should directly illustrate the post topic, be informative and professional
+- IMAGE GENERATION IS CRITICAL. Always generate EXPLANATORY, INFORMATIVE images:
+  * Prefer: flowcharts, block diagrams, architecture diagrams, comparison charts, process flows, step-by-step visuals, infographics with key stats/numbers
+  * Include TEXT LABELS in the image — key terms, numbers, names, arrows showing relationships
+  * Think: "If someone only saw the image, could they understand the core concept?"
+  * Example: For "AI agents replacing SaaS" → a diagram showing Traditional SaaS stack on left vs AI Agent stack on right with arrows
+  * Example: For "GPT-5 benchmarks" → a chart/comparison visual showing performance metrics
+  * Style: clean, modern, dark or gradient background, bold typography, tech aesthetic
+  * NEVER generate generic stock-photo-style images (handshakes, abstract waves, random robots)
 - Follow all stored user preferences from memory
-- Posts should be 150-250 words, conversational, with a hook opening and 3-5 hashtags
+- POST WRITING STYLE — make it ENGAGING, not boring paragraphs:
+  * Start with a BOLD hook — a surprising stat, hot take, or provocative question
+  * Use SHORT lines (1-2 sentences max per line) with line breaks between them
+  * Break complex ideas into numbered lists or bullet points
+  * Use "→" arrows to show cause/effect or progression
+  * Add a personal take or prediction — don't just summarize news
+  * End with a question to drive comments
+  * 150-250 words, 3-5 hashtags at the end
+  * Tone: confident, conversational, like texting a smart friend — NOT corporate/formal
+  * Example structure:
+    [Hook — 1 bold line]
+
+    [Context — 2-3 short lines explaining what happened]
+
+    [Breakdown — numbered list or bullets with key points]
+
+    [Your take — 1-2 lines with opinion/prediction]
+
+    [CTA question]
+
+    #hashtags
 - When user asks to change/regenerate the image, ONLY change the image, keep the text
 - When user shares information and asks to make a post, use ALL the information they shared
 - Honor every command the user gives — edits, regeneration, skip, post, etc.
@@ -92,13 +129,13 @@ TOOLS = [
     {
         "type": "function",
         "name": "generate_post_image",
-        "description": "Generate an AI image for a LinkedIn post. Provide a detailed, specific prompt that illustrates the post's topic. The image should be informative, professional, and eye-catching.",
+        "description": "Generate an EXPLANATORY AI image for a LinkedIn post. The image MUST be informative — think diagrams, flowcharts, infographics, comparison charts, or architecture visuals with text labels. NOT generic stock photos.",
         "parameters": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Detailed image generation prompt. Be specific about the scene, style, colors, and what concepts to visualize. Example: 'A futuristic command center with holographic AI agent interfaces, showing multiple AI assistants collaborating with human operators, cool blue and purple lighting, photorealistic 3D render style'"
+                    "description": "Detailed image prompt for an INFORMATIVE visual. MUST include: (1) Type of visual: flowchart/block diagram/comparison chart/infographic/architecture diagram (2) Specific text labels, key terms, numbers to show (3) Layout and flow direction (4) Style: clean modern tech aesthetic, dark gradient background, bold typography. Example: 'A clean block diagram on dark gradient background showing the evolution of AI: Left block labeled \"Rule-Based AI\" with gear icons → middle block \"Machine Learning\" with neural network icon → right block \"AI Agents\" with autonomous robot icon. Arrows connecting each stage. Below each block, key characteristics in smaller text. Modern tech aesthetic, blue and purple accent colors, bold sans-serif typography'"
                 }
             },
             "required": ["prompt"]
@@ -251,6 +288,21 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "save_post_metrics",
+        "description": "Save engagement metrics for a posted LinkedIn post. Use when the user reports how a post performed (e.g. 'post 12 got 50 likes 10 comments 3 shares').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "draft_id": {"type": "integer", "description": "The post/draft ID"},
+                "likes": {"type": "integer", "description": "Number of likes"},
+                "comments": {"type": "integer", "description": "Number of comments"},
+                "shares": {"type": "integer", "description": "Number of shares/reposts"}
+            },
+            "required": ["draft_id", "likes", "comments", "shares"]
+        }
+    },
+    {
+        "type": "function",
         "name": "skip_draft",
         "description": "Skip/discard the current draft.",
         "parameters": {
@@ -356,6 +408,11 @@ def execute_tool(name, args):
         set_scheduled_time(args["draft_id"], args["scheduled_time"])
         return json.dumps({"status": "scheduled", "scheduled_at": args["scheduled_time"], "draft_id": args["draft_id"]})
 
+    elif name == "save_post_metrics":
+        from db import save_metrics
+        save_metrics(args["draft_id"], None, 0, args["likes"], args["comments"], args["shares"])
+        return json.dumps({"status": "saved", "draft_id": args["draft_id"]})
+
     elif name == "skip_draft":
         mark_skipped(args["draft_id"])
         return json.dumps({"status": "skipped"})
@@ -376,6 +433,15 @@ def run_agent(user_message, conversation_history=None, think_hard=False):
     if memories:
         memory_lines = "\n".join(f"- {k}: {v}" for k, v in memories.items())
         system += f"\n\nStored user preferences (ALWAYS follow these):\n{memory_lines}"
+
+    # Add top performing posts for learning
+    top_posts = get_top_posts(limit=3)
+    if top_posts:
+        top_lines = []
+        for p in top_posts:
+            score = p.get("engagement_score", 0)
+            top_lines.append(f"- [{score} engagement] {p['content'][:150]}...")
+        system += f"\n\nTOP PERFORMING POSTS (learn from these styles/topics):\n" + "\n".join(top_lines)
 
     messages = [{"role": "system", "content": system}]
     if conversation_history:

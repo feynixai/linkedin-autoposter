@@ -189,6 +189,52 @@ def create_post_with_image(content, image_path):
     return post_urn
 
 
+def get_post_metrics(post_urn):
+    """Get engagement metrics for a LinkedIn post."""
+    from urllib.parse import quote
+
+    token_data = load_token()
+    if not token_data:
+        return None
+
+    access_token = token_data["access_token"]
+    encoded_urn = quote(post_urn, safe="")
+
+    # Try socialActions endpoint
+    try:
+        resp = requests.get(
+            f"https://api.linkedin.com/rest/socialActions/{encoded_urn}",
+            headers=_headers(access_token),
+        )
+        if resp.ok:
+            data = resp.json()
+            return {
+                "likes": data.get("likesSummary", {}).get("totalLikes", 0),
+                "comments": data.get("commentsSummary", {}).get("totalFirstLevelComments", 0),
+                "shares": data.get("sharesSummary", {}).get("totalShares", 0),
+            }
+    except Exception:
+        pass
+
+    # Try posts endpoint as fallback
+    try:
+        resp = requests.get(
+            f"https://api.linkedin.com/rest/posts/{encoded_urn}",
+            headers=_headers(access_token),
+        )
+        if resp.ok:
+            data = resp.json()
+            return {
+                "likes": data.get("numLikes", 0),
+                "comments": data.get("numComments", 0),
+                "shares": data.get("numShares", 0),
+            }
+    except Exception:
+        pass
+
+    return {"likes": 0, "comments": 0, "shares": 0}
+
+
 def create_text_post(content):
     """Create a text-only LinkedIn post."""
     token_data = load_token()

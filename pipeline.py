@@ -30,6 +30,56 @@ FEEDS = [
     "https://feeds.arstechnica.com/arstechnica/technology-lab",
 ]
 
+# Influential tech/AI accounts to monitor on X
+INFLUENTIAL_ACCOUNTS = [
+    "sama",              # Sam Altman (OpenAI)
+    "elonmusk",          # Elon Musk
+    "karpathy",          # Andrej Karpathy
+    "ylecun",            # Yann LeCun (Meta AI)
+    "AnthropicAI",       # Anthropic
+    "OpenAI",            # OpenAI
+    "GoogleDeepMind",    # Google DeepMind
+    "satyanadella",      # Satya Nadella (Microsoft)
+    "demishassabis",     # Demis Hassabis (DeepMind)
+    "ClementDelangue",   # Clement Delangue (Hugging Face)
+    "DrJimFan",          # Jim Fan (NVIDIA)
+    "bindureddy",        # Bindu Reddy
+    "hardmaru",          # David Ha (Sakana AI)
+]
+
+
+def fetch_influential_tweets():
+    """Fetch recent tweets from influential tech accounts."""
+    tweets = []
+    for handle in INFLUENTIAL_ACCOUNTS:
+        try:
+            resp = requests.get(f"https://api.fxtwitter.com/{handle}", timeout=10)
+            if resp.ok:
+                data = resp.json()
+                # fxtwitter user timeline returns recent tweets
+                user = data.get("user", {})
+                if user:
+                    # Get their latest tweet from timeline
+                    timeline_resp = requests.get(
+                        f"https://api.fxtwitter.com/{handle}/status/{user.get('last_tweet_id', '')}",
+                        timeout=10,
+                    )
+                    if timeline_resp.ok:
+                        tweet_data = timeline_resp.json().get("tweet", {})
+                        if tweet_data and tweet_data.get("text"):
+                            tweets.append({
+                                "author": f"{tweet_data.get('author', {}).get('name', handle)} (@{handle})",
+                                "text": tweet_data.get("text", ""),
+                                "url": f"https://x.com/{handle}/status/{tweet_data.get('id', '')}",
+                                "likes": tweet_data.get("likes", 0),
+                                "retweets": tweet_data.get("retweets", 0),
+                            })
+        except Exception:
+            continue
+    # Sort by engagement (likes + retweets)
+    tweets.sort(key=lambda t: t.get("likes", 0) + t.get("retweets", 0), reverse=True)
+    return tweets
+
 
 def fetch_url_content(url):
     """Fetch content from a URL (tweet, article, etc.) and return text."""
@@ -202,24 +252,47 @@ TODAY'S TRENDING TECH/AI NEWS:
 TOPICS ALREADY POSTED RECENTLY (avoid repeating):
 {recent_text}
 
-Write a LinkedIn post that:
-1. Picks 1-2 of the most interesting/impactful trends from today
-2. Adds your own insightful take or prediction
-3. Is engaging, conversational, and authentic (not corporate/cringe)
-4. Uses short paragraphs and line breaks for readability
-5. Includes 3-5 relevant hashtags at the end
-6. Is 150-250 words
-7. Starts with a hook (bold statement, question, or surprising fact)
-8. Does NOT use emojis excessively (max 2-3 total)
-9. Include source links where relevant (e.g. "According to [TechCrunch](url)...")
+Write a LinkedIn post that is ENGAGING and EASY TO READ — not boring paragraphs:
 
-Also provide an image prompt. The image should:
-- Directly illustrate the main concept of your post (e.g. if about AI agents, show a futuristic workspace with AI assistants; if about open source, show collaborative coding)
-- Be informative and visually represent the topic, not just abstract shapes
-- Include specific visual elements that relate to the technology discussed
-- Be professional, modern, photorealistic or high-quality 3D render style
-- NO text, watermarks, or logos in the image
-- Think: "What image would make someone stop scrolling on LinkedIn?"
+FORMAT:
+- Start with a BOLD hook — a surprising stat, hot take, or provocative question (1 line)
+- Use SHORT lines (1-2 sentences max) with blank lines between them
+- Break complex ideas into numbered lists or "→" arrow progressions
+- Add YOUR personal take or prediction — don't just summarize
+- End with a question to drive comments
+- 150-250 words, 3-5 hashtags at the end
+- Max 2-3 emojis total
+- Include source links where relevant
+
+TONE: confident, conversational, like texting a smart friend — NOT corporate/formal
+
+EXAMPLE STRUCTURE:
+[Hook — 1 bold provocative line]
+
+[What happened — 2-3 short lines]
+
+Here's why this matters:
+
+1. [Point one]
+2. [Point two]
+3. [Point three]
+
+[Your hot take or prediction — 1-2 lines]
+
+[Question to drive engagement]
+
+#hashtags
+
+Also provide an image prompt. The image MUST be EXPLANATORY and INFORMATIVE:
+- Generate a DIAGRAM, FLOWCHART, INFOGRAPHIC, or COMPARISON CHART — NOT a generic scene
+- Include TEXT LABELS in the image: key terms, numbers, names, arrows showing relationships
+- Think: "If someone only saw this image, could they understand the core concept of my post?"
+- Examples of GOOD image prompts:
+  * "Block diagram on dark gradient background: Left side 'Traditional Stack' (boxes: Frontend, Backend, Database, Auth, Payments). Right side 'AI Agent Stack' (single box: AI Agent with arrows to all services). Bold title 'The Great Unbundling'. Clean tech aesthetic, blue/purple accents"
+  * "Comparison infographic: Two columns — 'Open Source AI' vs 'Closed AI'. Each with 4 rows showing: Cost, Customization, Privacy, Speed with icons and short labels. Modern dark theme, green vs red indicators"
+  * "Flowchart showing: User Query → AI Agent → branching arrows to Tools (Search, Code, Data) → Results → Response. Clean modern style with labeled nodes and arrows"
+- Style: clean, modern, dark or gradient background, bold sans-serif typography, tech aesthetic
+- NEVER: generic stock photos, random robots, abstract shapes, handshakes, people at laptops
 
 Respond as JSON: {{"post": "...", "image_prompt": "detailed descriptive image prompt here", "topics": ["..."], "use_web_image": false}}"""
 
